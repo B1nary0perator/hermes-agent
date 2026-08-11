@@ -319,6 +319,7 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
    *  context-menu "Open in split" path passes just a `dir`. */
   onNewSessionSplit: NewSessionSplitHandler
   onManageCronJob: (jobId: string) => void
+  onOpenCronRun: (jobId: string, outputId: string, profile?: string) => void
   onTriggerCronJob: (jobId: string) => Promise<void>
 }
 
@@ -334,6 +335,7 @@ export function ChatSidebar({
   onNewSessionInWorkspace,
   onNewSessionSplit,
   onManageCronJob,
+  onOpenCronRun,
   onTriggerCronJob
 }: ChatSidebarProps) {
   const { t } = useI18n()
@@ -1921,7 +1923,7 @@ export function ChatSidebar({
                 jobs={cronJobs}
                 label={s.cronJobs}
                 onManageJob={onManageCronJob}
-                onOpenRun={onResumeSession}
+                onOpenRun={onOpenCronRun}
                 onToggle={() => setSidebarCronOpen(!cronOpen)}
                 onTriggerJob={onTriggerCronJob}
                 open={cronOpen}

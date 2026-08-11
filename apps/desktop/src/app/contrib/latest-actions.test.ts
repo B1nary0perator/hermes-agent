@@ -46,6 +46,7 @@ function makeSidebarActions(): SidebarActions {
     onNavigate: vi.fn(),
     onNewSessionInWorkspace: vi.fn(),
     onNewSessionSplit: vi.fn(),
+    onOpenCronRun: vi.fn(),
     onResumeSession: vi.fn(),
     onTriggerCronJob: vi.fn()
   }

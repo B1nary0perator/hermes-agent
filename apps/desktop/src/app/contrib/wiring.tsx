@@ -48,7 +48,7 @@ import { $billingSettingsRequest } from '@/store/billing-block'
 import { $desktopBoot } from '@/store/boot'
 import { requestVoiceConversationStart } from '@/store/composer'
 import { $activeConnectionId } from '@/store/connections'
-import { $cronReviewRequest, setCronFocusJobId } from '@/store/cron'
+import { $cronReviewRequest, setCronFocusJobId, setCronFocusOutput } from '@/store/cron'
 import { requestGatewayForProfile } from '@/store/gateway'
 import { reconnectGateway } from '@/store/gateway-reconnect'
 import { $pinnedSessionIds, pinSession, restoreWorktree, unpinSession } from '@/store/layout'
@@ -1151,6 +1151,10 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         // An EDGE drop SPLITS a visible pane — list it like every other split.
         listed: dir === 'center' ? false : undefined
       }),
+    onOpenCronRun: (jobId, outputId, profile) => {
+      setCronFocusOutput(jobId, outputId, profile)
+      navigate(CRON_ROUTE)
+    },
     onPasteClipboardImage: opts => composer.pasteClipboardImage(opts),
     onPickFiles: () => void composer.pickContextPaths('file'),
     onPickFolders: () => void composer.pickContextPaths('folder'),
