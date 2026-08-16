@@ -37,6 +37,9 @@ import {
   deleteCronJob,
   getAutomationBlueprints,
   getCronDeliveryTargets,
+  type CronJobOutput,
+  getCronJobOutput,
+  getCronJobOutputs,
   getCronJobRuns,
   instantiateAutomationBlueprint,
   pauseCronJob,
@@ -852,6 +855,7 @@ function CronJobDetail({ busy, c, job, onEdit, onOpenSession, onPauseResume, onT
       ) : null}
 
       <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} />
+      <CronJobOutputs c={c} jobId={job.id} profile={job.profile} />
     </PanelDetail>
   )
 }
@@ -975,6 +979,194 @@ function deliverTargetLabel(target: CronDeliveryTarget, c: Translations['cron'])
 // blueprint form. The scheduler accepts comma-separated targets, so users can
 // keep results local while also sending them to connected platforms. Preserve
 // selected targets missing from discovery so editing never drops a saved route.
+function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId: string; profile?: string }) {
+  const [runs, setRuns] = useState<null | CronJobOutput[]>(null)
+  const [runsError, setRunsError] = useState(false)
+  const [selectedOutputId, setSelectedOutputId] = useState<null | string>(null)
+  const [output, setOutput] = useState<null | string>(null)
+  const [outputError, setOutputError] = useState(false)
+  const [outputLoading, setOutputLoading] = useState(false)
+  const [focusUnavailable, setFocusUnavailable] = useState<null | string>(null)
+  const outputRequestRef = useRef(0)
+  const focusTarget = useStore($cronFocus)
+  const changeEventsAvailable = useStore($changeEventsAvailable)
+  const cronChangeTick = useStore($cronChangeTick)
+
+  const openOutput = useCallback(
+    async (outputId: string) => {
+      const requestId = ++outputRequestRef.current
+
+      setFocusUnavailable(null)
+      setSelectedOutputId(outputId)
+      setOutput(null)
+      setOutputError(false)
+      setOutputLoading(true)
+
+      try {
+        const detail = await getCronJobOutput(jobId, outputId, profile)
+
+        if (outputRequestRef.current === requestId) {
+          setOutput(detail.content)
+        }
+      } catch {
+        if (outputRequestRef.current === requestId) {
+          setOutputError(true)
+        }
+      } finally {
+        if (outputRequestRef.current === requestId) {
+          setOutputLoading(false)
+        }
+      }
+    },
+    [jobId, profile]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    let latestRequestId = 0
+
+    const load = () => {
+      const requestId = ++latestRequestId
+
+      return getCronJobOutputs(jobId, 20, profile)
+        .then(result => {
+          if (!cancelled && requestId === latestRequestId) {
+            setRunsError(false)
+            setRuns(result)
+          }
+        })
+        .catch(() => {
+          if (!cancelled && requestId === latestRequestId) {
+            setRunsError(true)
+            setRuns(prev => prev ?? [])
+          }
+        })
+    }
+
+    void load()
+
+    const intervalId = window.setInterval(
+      () => {
+        if (document.visibilityState === 'visible') {
+          void load()
+        }
+      },
+      changeEventsAvailable ? RUNS_BACKSTOP_INTERVAL_MS : RUNS_POLL_INTERVAL_MS
+    )
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void load()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+    // cronChangeTick: a fired run moves jobs.json bookkeeping → reload now.
+  }, [changeEventsAvailable, cronChangeTick, jobId, profile])
+
+  useEffect(() => {
+    if (
+      runs === null ||
+      runsError ||
+      focusTarget?.jobId !== jobId ||
+      (focusTarget.profile && focusTarget.profile !== profile) ||
+      !focusTarget.outputId
+    ) {
+      return
+    }
+
+    if (runs.some(run => run.id === focusTarget.outputId)) {
+      void openOutput(focusTarget.outputId)
+    } else {
+      ++outputRequestRef.current
+      setSelectedOutputId(null)
+      setOutput(null)
+      setOutputError(false)
+      setOutputLoading(false)
+      setFocusUnavailable(focusTarget.outputId)
+    }
+
+    setCronFocusJobId(null)
+  }, [focusTarget, jobId, openOutput, profile, runs, runsError])
+
+  return (
+    <div>
+      <PanelSectionLabel className="mb-1.5">
+        {c.runHistory}
+        {runs && runs.length > 0 ? ` · ${runs.length}` : ''}
+      </PanelSectionLabel>
+      {runsError ? (
+        <p className="py-1 text-xs text-destructive">{c.failedLoad}</p>
+      ) : runs === null ? (
+        <div className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground">
+          <Codicon name="loading" size="0.75rem" spinning />
+        </div>
+      ) : runs.length === 0 ? (
+        <div className="py-1 text-xs text-muted-foreground">{c.noRuns}</div>
+      ) : (
+        <div className="flex flex-col gap-px">
+          {runs.map(run => (
+            <button
+              aria-expanded={selectedOutputId === run.id}
+              className={cn(
+                'row-hover flex items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                selectedOutputId === run.id && 'bg-(--ui-row-active-background)'
+              )}
+              key={run.id}
+              onClick={() => void openOutput(run.id)}
+              type="button"
+            >
+              <span className="truncate text-foreground/85">{run.filename}</span>
+              <span className="shrink-0 text-[0.62rem] text-muted-foreground/55 tabular-nums">
+                {formatRunTime(run.created_at)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {focusUnavailable ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          {c.outputUnavailable(focusUnavailable)}
+        </p>
+      ) : null}
+      {selectedOutputId ? (
+        <div className="mt-3 min-h-16 rounded-md border border-(--ui-stroke-tertiary) bg-background p-3">
+          {outputLoading ? (
+            <div className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">
+              <Codicon name="loading" size="0.75rem" spinning />
+              {c.loading}
+            </div>
+          ) : outputError ? (
+            <p className="py-2 text-xs text-destructive">{c.failedLoad}</p>
+          ) : output !== null ? (
+            <MarkdownTextContent containerClassName="text-sm" disableArtifacts isRunning={false} text={output} />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// Label a cron delivery target: 'local' → localized "This desktop", known
+// platforms → their delivery label, anything else → the backend name. Configured
+// platforms without a cron home channel get a "set a home channel first" hint.
+function deliverTargetLabel(target: CronDeliveryTarget, c: Translations['cron']): string {
+  const base = target.id === 'local' ? c.deliveryLabels.local : (c.deliveryLabels[target.id] ?? target.name)
+
+  return target.id !== 'local' && !target.home_target_set ? `${base} — ${c.deliverNeedsHomeChannel}` : base
+}
+
+// The delivery-target checkbox group, shared by the manual cron editor and the
+// blueprint form. The scheduler accepts comma-separated targets, so users can
+// keep results local while also sending them to connected platforms. Preserve
+// selected targets missing from discovery so editing never drops a saved route.
+
 export function DeliverCheckboxes({
   c,
   id,
