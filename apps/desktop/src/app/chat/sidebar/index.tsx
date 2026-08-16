@@ -306,7 +306,7 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate: (item: SidebarNavItem) => void
   onLoadMoreSessions: () => Promise<void> | void
   onLoadMoreMessaging?: (platform: string) => Promise<void> | void
-  onResumeSession: (sessionId: string, session?: SessionInfo) => void
+  onResumeSession: (sessionId: string, owner?: SessionInfo | string) => void
   onDeleteSession: (sessionId: string) => void
   onArchiveSession: (sessionId: string) => void
   onBranchSession: (sessionId: string) => void
@@ -318,7 +318,7 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
    *  buttons), which land a fresh session exactly where it's dropped. The
    *  context-menu "Open in split" path passes just a `dir`. */
   onNewSessionSplit: NewSessionSplitHandler
-  onManageCronJob: (jobId: string) => void
+  onManageCronJob: (jobId: string, profile?: string) => void
   onOpenCronRun: (jobId: string, outputId: string, profile?: string) => void
   onTriggerCronJob: (jobId: string) => Promise<void>
 }

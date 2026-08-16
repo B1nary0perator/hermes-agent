@@ -1136,8 +1136,8 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     onEdit: editMessage,
     onLoadMoreMessaging: loadMoreMessagingForPlatform,
     onLoadMoreSessions: loadMoreSessions,
-    onManageCronJob: jobId => {
-      setCronFocusJobId(jobId)
+    onManageCronJob: (jobId, profile) => {
+      setCronFocusJobId(jobId, profile)
       navigate(CRON_ROUTE)
     },
     onNavigate: selectSidebarItem,
@@ -1173,11 +1173,13 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     // ambient/id-only path. Clear any stale explicit hint first: older builds
     // incorrectly persisted those rows as `local`, which made a remote session
     // click switch to the Mac backend and fail with "session not found".
-    onResumeSession: (sessionId, session) => {
-      const ownerRoute = sessionOwnerRouteFromRow(session)
+    onResumeSession: (sessionId, owner) => {
+      const ownerRoute = typeof owner === 'string' ? undefined : sessionOwnerRouteFromRow(owner)
 
       if (ownerRoute) {
         requestSessionResume(sessionId, ownerRoute)
+      } else if (typeof owner === 'string' && owner.trim()) {
+        requestSessionResume(sessionId, owner.trim())
       } else {
         forgetSessionOwnerHintsForSession(sessionId)
         requestSessionResume(sessionId)

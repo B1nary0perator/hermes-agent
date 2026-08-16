@@ -44,7 +44,11 @@ import { sessionTileOwnerRoute } from '@/store/session-states'
 // Re-exported for the many session-actions/tile call sites that already import
 // it from here; the canonical definition lives in @/store/session.
 export { sessionMatchesStoredId }
-import { sessionOwnerRouteFromRow, type SessionOwnerScope } from '@/store/session-request-router'
+import {
+  isSessionOwnerRoute,
+  sessionOwnerRouteFromRow,
+  type SessionOwnerScope
+} from '@/store/session-request-router'
 import { reportBackendContract, reportInstallMethodWarning } from '@/store/updates'
 import type { SessionCreateResponse, SessionInfo, SessionResumeResult, SessionRuntimeInfo } from '@/types/hermes'
 
@@ -1491,8 +1495,10 @@ export function cachedSessionRow(storedSessionId: string): SessionInfo | undefin
 
 export async function resolveStoredSession(
   storedSessionId: string,
-  ownerRoute?: SessionProfileRoute
+  owner?: SessionOwnerScope
 ): Promise<SessionInfo | undefined> {
+  const ownerRoute = isSessionOwnerRoute(owner) ? owner : undefined
+  const requestedOwner = typeof owner === 'string' && owner.trim() ? normalizeProfileKey(owner) : undefined
   const cached = cachedSessionRow(storedSessionId)
 
   if (ownerRoute) {
@@ -1520,6 +1526,18 @@ export async function resolveStoredSession(
     } catch {
       // An explicit owner is fail-closed. Probing the ambient or another
       // profile would turn a stale route into a cross-connection open.
+      return undefined
+    }
+  }
+
+  if (requestedOwner) {
+    if (cached && normalizeProfileKey(cached.profile) === requestedOwner) return cached
+    try {
+      const session = await getSession(storedSessionId, requestedOwner)
+      session.profile = requestedOwner
+      upsertResolvedSession(session, storedSessionId)
+      return session
+    } catch {
       return undefined
     }
   }
