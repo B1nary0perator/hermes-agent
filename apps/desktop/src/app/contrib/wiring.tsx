@@ -249,9 +249,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         return
       }
 
-      void window.hermesDesktop?.recycleBackend?.(normalizeProfileKey($activeGatewayProfile.get())).catch(err =>
-        notifyError(err, translateNow('notifications.errors.restartHermesFailed'))
-      )
+      void window.hermesDesktop
+        ?.recycleBackend?.(normalizeProfileKey($activeGatewayProfile.get()))
+        .catch(err => notifyError(err, translateNow('notifications.errors.restartHermesFailed')))
     }
   }, [backendRestartRequest])
 
@@ -1179,7 +1179,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       if (ownerRoute) {
         requestSessionResume(sessionId, ownerRoute)
       } else if (typeof owner === 'string' && owner.trim()) {
-        requestSessionResume(sessionId, owner.trim())
+        requestSessionResume(sessionId, { connectionId: $activeConnectionId.get() ?? 'local', profile: owner.trim() })
       } else {
         forgetSessionOwnerHintsForSession(sessionId)
         requestSessionResume(sessionId)

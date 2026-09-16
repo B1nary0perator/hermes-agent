@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import type * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { MarkdownTextContent } from '@/components/assistant-ui/markdown-text'
 import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -37,24 +38,22 @@ import {
   deleteCronJob,
   getAutomationBlueprints,
   getCronDeliveryTargets,
-  type CronJobOutput,
   getCronJobOutput,
   getCronJobOutputs,
-  getCronJobRuns,
   instantiateAutomationBlueprint,
   pauseCronJob,
   resumeCronJob,
-  type SessionInfo,
   updateCronJob
 } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
 import { AlertTriangle } from '@/lib/icons'
 import { requestModelOptions } from '@/lib/model-options'
 import { asText } from '@/lib/text'
-import { $cronFocusJobId, $cronJobs, invalidateCronJobsRequests, setCronFocusJobId } from '@/store/cron'
+import { $cronFocus, $cronJobs, cronJobIdentity, invalidateCronJobsRequests, setCronFocusJobId } from '@/store/cron'
 import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'
 import { notify, notifyError } from '@/store/notifications'
 import { $profileScope, ALL_PROFILES } from '@/store/profile'
+import type { CronJobOutput } from '@/types/hermes'
 
 import { useRefreshHotkey } from '../hooks/use-refresh-hotkey'
 import {
@@ -344,7 +343,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   // Set when a job is opened from the sidebar so we scroll it into view once the
   // row exists. Cleared after the scroll fires.
   const pendingScrollRef = useRef<null | string>(null)
-  const focusJobId = useStore($cronFocusJobId)
+  const focusTarget = useStore($cronFocus)
 
   const [editor, setEditor] = useState<EditorState>({ mode: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<CronJob | null>(null)
@@ -384,20 +383,26 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   // normally doesn't re-trigger it.
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    if (!focusJobId) {
+    if (!focusTarget) {
       return
     }
 
-    const match = jobs.find(job => (job.id === focusJobId || jobName(job) === focusJobId) && (!focusTarget?.profile || job.profile === focusTarget.profile))
+    const match = jobs.find(
+      job =>
+        (job.id === focusTarget.jobId || jobName(job) === focusTarget.jobId) &&
+        (!focusTarget.profile || job.profile === focusTarget.profile)
+    )
 
     if (match) {
-      const matchKey = cronJobIdentity(match)
-      setSelectedJobKey(matchKey)
-      pendingScrollRef.current = matchKey
+      const key = cronJobIdentity(match)
+      setSelectedJobKey(key)
+      pendingScrollRef.current = key
     }
 
-    setCronFocusJobId(null)
-  }, [focusJobId, focusTarget, jobs])
+    if (!focusTarget.outputId) {
+      setCronFocusJobId(null)
+    }
+  }, [focusTarget, jobs])
 
   const visibleJobs = useMemo(
     () => jobs.filter(job => matchesQuery(job, query.trim())).sort((a, b) => jobTitle(a).localeCompare(jobTitle(b))),
@@ -431,7 +436,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   useEffect(() => {
     const target = pendingScrollRef.current
 
-    if (!target || (!selectedJob || cronJobIdentity(selectedJob) !== target)) {
+    if (!target || !selectedJob || cronJobIdentity(selectedJob) !== target) {
       return
     }
 
@@ -855,8 +860,7 @@ function CronJobDetail({ busy, c, job, onEdit, onOpenSession, onPauseResume, onT
         </section>
       ) : null}
 
-      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} />
-      <CronJobOutputs c={c} jobId={job.id} profile={job.profile} />
+      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} profile={job.profile} />
     </PanelDetail>
   )
 }
@@ -878,109 +882,17 @@ function formatRunTime(seconds?: null | number): string {
 const RUNS_POLL_INTERVAL_MS = 8000
 const RUNS_BACKSTOP_INTERVAL_MS = 60_000
 
-function CronJobRuns({
+export function CronJobRuns({
   c,
   jobId,
-  onOpenSession
+  onOpenSession: _onOpenSession,
+  profile
 }: {
   c: Translations['cron']
   jobId: string
   onOpenSession?: (sessionId: string) => void
+  profile?: string
 }) {
-  const [runs, setRuns] = useState<null | SessionInfo[]>(null)
-  const changeEventsAvailable = useStore($changeEventsAvailable)
-  const cronChangeTick = useStore($cronChangeTick)
-
-  useEffect(() => {
-    let cancelled = false
-
-    const load = () =>
-      getCronJobRuns(jobId)
-        .then(result => {
-          if (!cancelled) {
-            setRuns(result)
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setRuns(prev => prev ?? [])
-          }
-        })
-
-    void load()
-
-    const intervalId = window.setInterval(
-      () => {
-        if (document.visibilityState === 'visible') {
-          void load()
-        }
-      },
-      changeEventsAvailable ? RUNS_BACKSTOP_INTERVAL_MS : RUNS_POLL_INTERVAL_MS
-    )
-
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void load()
-      }
-    }
-
-    document.addEventListener('visibilitychange', onVisible)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-    // cronChangeTick: a fired run moves jobs.json bookkeeping → reload now.
-  }, [changeEventsAvailable, cronChangeTick, jobId])
-
-  return (
-    <div>
-      <PanelSectionLabel className="mb-1.5">
-        {c.runHistory}
-        {runs && runs.length > 0 ? ` · ${runs.length}` : ''}
-      </PanelSectionLabel>
-      {runs === null ? (
-        <div className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground">
-          <Codicon name="loading" size="0.75rem" spinning />
-        </div>
-      ) : runs.length === 0 ? (
-        <div className="py-1 text-xs text-muted-foreground">{c.noRuns}</div>
-      ) : (
-        <div className="flex flex-col gap-px">
-          {runs.map(run => (
-            <button
-              className="row-hover flex items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              key={run.id}
-              onClick={() => onOpenSession?.(run.id)}
-              type="button"
-            >
-              <span className="truncate text-foreground/85">{run.title?.trim() || run.preview?.trim() || run.id}</span>
-              <span className="shrink-0 text-[0.62rem] text-muted-foreground/55 tabular-nums">
-                {formatRunTime(run.last_active || run.started_at)}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Label a cron delivery target: 'local' → localized "This desktop", known
-// platforms → their delivery label, anything else → the backend name. Configured
-// platforms without a cron home channel get a "set a home channel first" hint.
-function deliverTargetLabel(target: CronDeliveryTarget, c: Translations['cron']): string {
-  const base = target.id === 'local' ? c.deliveryLabels.local : (c.deliveryLabels[target.id] ?? target.name)
-
-  return target.id !== 'local' && !target.home_target_set ? `${base} — ${c.deliverNeedsHomeChannel}` : base
-}
-
-// The delivery-target checkbox group, shared by the manual cron editor and the
-// blueprint form. The scheduler accepts comma-separated targets, so users can
-// keep results local while also sending them to connected platforms. Preserve
-// selected targets missing from discovery so editing never drops a saved route.
-function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId: string; profile?: string }) {
   const [runs, setRuns] = useState<null | CronJobOutput[]>(null)
   const [runsError, setRunsError] = useState(false)
   const [selectedOutputId, setSelectedOutputId] = useState<null | string>(null)
@@ -996,7 +908,6 @@ function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId:
   const openOutput = useCallback(
     async (outputId: string) => {
       const requestId = ++outputRequestRef.current
-
       setFocusUnavailable(null)
       setSelectedOutputId(outputId)
       setOutput(null)
@@ -1065,19 +976,18 @@ function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId:
 
     return () => {
       cancelled = true
+      ++outputRequestRef.current
       window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisible)
     }
-    // cronChangeTick: a fired run moves jobs.json bookkeeping → reload now.
   }, [changeEventsAvailable, cronChangeTick, jobId, profile])
-
   useEffect(() => {
     if (
       runs === null ||
       runsError ||
       focusTarget?.jobId !== jobId ||
-      (focusTarget.profile && focusTarget.profile !== profile) ||
-      !focusTarget.outputId
+      !focusTarget.outputId ||
+      (focusTarget.profile && focusTarget.profile !== profile)
     ) {
       return
     }
@@ -1115,10 +1025,7 @@ function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId:
           {runs.map(run => (
             <button
               aria-expanded={selectedOutputId === run.id}
-              className={cn(
-                'row-hover flex items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-                selectedOutputId === run.id && 'bg-(--ui-row-active-background)'
-              )}
+              className="row-hover flex items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               key={run.id}
               onClick={() => void openOutput(run.id)}
               type="button"
@@ -1139,10 +1046,7 @@ function CronJobOutputs({ c, jobId, profile }: { c: Translations['cron']; jobId:
       {selectedOutputId ? (
         <div className="mt-3 min-h-16 rounded-md border border-(--ui-stroke-tertiary) bg-background p-3">
           {outputLoading ? (
-            <div className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">
-              <Codicon name="loading" size="0.75rem" spinning />
-              {c.loading}
-            </div>
+            <Codicon name="loading" size="0.75rem" spinning />
           ) : outputError ? (
             <p className="py-2 text-xs text-destructive">{c.failedLoad}</p>
           ) : output !== null ? (
@@ -1167,7 +1071,6 @@ function deliverTargetLabel(target: CronDeliveryTarget, c: Translations['cron'])
 // blueprint form. The scheduler accepts comma-separated targets, so users can
 // keep results local while also sending them to connected platforms. Preserve
 // selected targets missing from discovery so editing never drops a saved route.
-
 export function DeliverCheckboxes({
   c,
   id,
