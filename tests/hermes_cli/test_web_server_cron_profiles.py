@@ -51,7 +51,6 @@ def test_fire_cron_job_scopes_store_and_runtime_home_together(
     """A profile fire must execute and persist under the same profile home."""
     from cron import jobs as cron_jobs
     from cron import scheduler
-    from hermes_cli import web_server
 
     from hermes_constants import (
         reset_hermes_home_override,
@@ -95,7 +94,6 @@ def test_create_registers_scheduler_inside_target_profile(
     """Dashboard create must resolve and register under the selected profile."""
     from cron import jobs as cron_jobs
     from cron.scheduler_provider import CronScheduler
-    from hermes_cli import web_server
     from hermes_constants import get_hermes_home
 
     worker_home = isolated_profiles["worker_alpha"]
@@ -139,10 +137,9 @@ def test_cron_run_outputs_are_read_from_the_owning_profile(
 ):
     """Desktop run detail must use the durable markdown output, not a chat row."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -162,7 +159,7 @@ def test_cron_run_outputs_are_read_from_the_owning_profile(
     monkeypatch.setattr(cron_jobs, "_get_hermes_timezone", lambda: timezone.utc)
     expected_created_at = datetime(2026, 8, 11, 9, tzinfo=timezone.utc).timestamp()
 
-    listed = web_server._list_cron_job_outputs_sync(job["id"], limit=1)
+    listed = _rt_cron._list_cron_job_outputs_sync(job["id"], limit=1)
 
     assert listed["profile"] == "worker_alpha"
     assert listed["outputs"] == [
@@ -173,7 +170,7 @@ def test_cron_run_outputs_are_read_from_the_owning_profile(
             "created_at": expected_created_at,
         }
     ]
-    detail = web_server._get_cron_job_output_sync(
+    detail = _rt_cron._get_cron_job_output_sync(
         job["id"], "2026-08-11_09-00-00"
     )
     assert detail["profile"] == "worker_alpha"
@@ -183,15 +180,14 @@ def test_cron_run_outputs_are_read_from_the_owning_profile(
 
 
 def test_cron_run_output_rejects_path_escape(isolated_profiles):
-    from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync("missing", "../jobs")
+        _rt_cron._get_cron_job_output_sync("missing", "../jobs")
 
     assert exc_info.value.status_code == 400
 
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync(
+        _rt_cron._get_cron_job_output_sync(
             "missing", "2026-99-99_99-99-99"
         )
 
@@ -200,10 +196,9 @@ def test_cron_run_output_rejects_path_escape(isolated_profiles):
 
 def test_cron_run_output_does_not_follow_symlinks(isolated_profiles, tmp_path):
     """The dashboard must not turn a planted output symlink into a file reader."""
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -221,9 +216,9 @@ def test_cron_run_output_does_not_follow_symlinks(isolated_profiles, tmp_path):
     except OSError:
         pytest.skip("symlink creation is unavailable on this platform")
 
-    assert web_server._list_cron_job_outputs_sync(job["id"])["outputs"] == []
+    assert _rt_cron._list_cron_job_outputs_sync(job["id"])["outputs"] == []
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync(job["id"], planted.stem)
+        _rt_cron._get_cron_job_output_sync(job["id"], planted.stem)
 
     assert exc_info.value.status_code == 404
 
@@ -235,10 +230,9 @@ def test_cron_run_output_rejects_symlink_swap_during_open(
 ):
     """The descriptor read must stay pinned when the path changes after lstat."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -270,7 +264,7 @@ def test_cron_run_output_rejects_symlink_swap_during_open(
     monkeypatch.setattr(cron_jobs.os, "open", swap_then_open)
 
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync(
+        _rt_cron._get_cron_job_output_sync(
             job["id"], planted.stem, profile="worker_alpha"
         )
 
@@ -282,10 +276,9 @@ def test_cron_run_output_rejects_symlinked_output_root(
     tmp_path,
 ):
     """A planted parent symlink must not move reads outside the profile store."""
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -306,11 +299,11 @@ def test_cron_run_output_rejects_symlinked_output_root(
     except OSError:
         pytest.skip("symlink creation is unavailable on this platform")
 
-    assert web_server._list_cron_job_outputs_sync(
+    assert _rt_cron._list_cron_job_outputs_sync(
         job["id"], profile="worker_alpha"
     )["outputs"] == []
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync(
+        _rt_cron._get_cron_job_output_sync(
             job["id"], planted.stem, profile="worker_alpha"
         )
 
@@ -326,7 +319,6 @@ def test_cron_run_output_rejects_symlinked_job_directory(
 ):
     """Descriptor and cross-platform path fallback both reject a job-dir link."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     if force_path_fallback:
         monkeypatch.setattr(
@@ -336,7 +328,7 @@ def test_cron_run_output_rejects_symlinked_job_directory(
         )
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -356,11 +348,11 @@ def test_cron_run_output_rejects_symlinked_job_directory(
     except OSError:
         pytest.skip("symlink creation is unavailable on this platform")
 
-    assert web_server._list_cron_job_outputs_sync(
+    assert _rt_cron._list_cron_job_outputs_sync(
         job["id"], profile="worker_alpha"
     )["outputs"] == []
     with pytest.raises(HTTPException) as exc_info:
-        web_server._get_cron_job_output_sync(
+        _rt_cron._get_cron_job_output_sync(
             job["id"], planted.stem, profile="worker_alpha"
         )
 
@@ -373,7 +365,6 @@ def test_cron_run_output_path_fallback_detects_persistent_parent_swap(
 ):
     """The path-only fallback rechecks directory identity after an operation."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     monkeypatch.setattr(
         cron_jobs.os,
@@ -381,7 +372,7 @@ def test_cron_run_output_path_fallback_detects_persistent_parent_swap(
         frozenset(cron_jobs.os.supports_dir_fd - {cron_jobs.os.open}),
     )
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -405,10 +396,9 @@ def test_cron_run_output_listing_surfaces_storage_errors(
     monkeypatch,
 ):
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -428,7 +418,7 @@ def test_cron_run_output_listing_surfaces_storage_errors(
     monkeypatch.setattr(cron_jobs.os, "scandir", fail_output_scan)
 
     with pytest.raises(PermissionError, match="output directory unavailable"):
-        web_server._list_cron_job_outputs_sync(
+        _rt_cron._list_cron_job_outputs_sync(
             job["id"], profile="worker_alpha"
         )
 
@@ -439,10 +429,9 @@ def test_cron_run_output_listing_surfaces_metadata_errors(
 ):
     """A durable output metadata failure is not an empty-history response."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     worker_home = isolated_profiles["worker_alpha"]
-    job = web_server._call_cron_for_profile(
+    job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
         "create_job",
         prompt="produce a markdown report",
@@ -472,7 +461,7 @@ def test_cron_run_output_listing_surfaces_metadata_errors(
     monkeypatch.setattr(cron_jobs.os, "scandir", lambda _path: OutputEntries())
 
     with pytest.raises(PermissionError, match="output metadata unavailable"):
-        web_server._list_cron_job_outputs_sync(
+        _rt_cron._list_cron_job_outputs_sync(
             job["id"], profile="worker_alpha"
         )
 
@@ -483,7 +472,6 @@ def test_dashboard_create_reports_saved_but_unregistered(
 ):
     """Dashboard callers can distinguish persistence from remote registration."""
     from cron.scheduler import CronSchedulerRegistrationError
-    from hermes_cli import web_server
 
     job = {"id": "saved-job", "name": "saved job"}
     failure = CronSchedulerRegistrationError(
@@ -524,7 +512,6 @@ def test_notify_cron_provider_scopes_store_and_runtime_home_together(
     """Provider reconciliation must observe the mutated profile, not default."""
     from cron import jobs as cron_jobs
     from cron import scheduler
-    from hermes_cli import web_server
 
     from hermes_constants import (
         reset_hermes_home_override,
@@ -567,7 +554,6 @@ def test_notify_cron_provider_failure_is_best_effort(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import web_server
 
     class FailNotifyProvider:
         @property
@@ -606,7 +592,6 @@ def test_external_provider_reconcile_fails_closed_with_multiple_profiles(
     armed one-shots in the shared NAS registry. The mutation itself still
     succeeds (fail-closed only skips the remote converge)."""
     from cron import scheduler
-    from hermes_cli import web_server
 
     monkeypatch.setattr(scheduler, "_hermes_home", None)
     monkeypatch.setattr(
@@ -655,7 +640,6 @@ def test_builtin_provider_hook_still_fires_with_multiple_profiles(
     safe no-op and must NOT be blocked by the multi-profile guard."""
     from cron import scheduler
     from cron.scheduler_provider import InProcessCronScheduler
-    from hermes_cli import web_server
 
     monkeypatch.setattr(scheduler, "_hermes_home", None)
     monkeypatch.setattr(
@@ -692,7 +676,6 @@ def test_profile_call_cannot_retarget_ticker_store_mid_write(
 ):
     """A dashboard profile call must not redirect a concurrent ticker save."""
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     default_cron = isolated_profiles["default"] / "cron"
     worker_cron = isolated_profiles["worker_alpha"] / "cron"
@@ -777,7 +760,6 @@ def test_profile_call_cannot_retarget_ticker_store_mid_write(
 
 @pytest.mark.asyncio
 async def test_cron_mutation_without_profile_finds_named_profile_job(isolated_profiles):
-    from hermes_cli import web_server
 
     worker_job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -805,7 +787,6 @@ async def test_dashboard_cron_mutations_notify_selected_profile_provider(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import web_server
 
     notified_profiles = []
     monkeypatch.setattr(
@@ -839,7 +820,6 @@ async def test_blueprint_instantiation_notifies_selected_profile_provider(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import web_server
 
     notified_profiles = []
     monkeypatch.setattr(
@@ -866,7 +846,6 @@ async def test_trigger_cron_job_fires_only_selected_job_and_returns_refreshed_st
     monkeypatch,
 ):
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     selected = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -938,7 +917,6 @@ async def test_trigger_cron_job_reports_lost_claim_as_conflict(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import web_server
 
     job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -970,7 +948,6 @@ async def test_trigger_cron_job_forces_paused_job_atomically(
     monkeypatch,
 ):
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -1011,7 +988,6 @@ async def test_trigger_paused_job_rejects_legacy_provider_without_mutating_job(
     monkeypatch,
 ):
     from fastapi import HTTPException
-    from hermes_cli import web_server
 
     job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -1054,7 +1030,6 @@ async def test_trigger_cron_job_returns_refreshed_execution_failure(
     monkeypatch,
 ):
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -1089,7 +1064,6 @@ async def test_trigger_cron_job_returns_completed_snapshot_for_retained_oneshot(
     monkeypatch,
 ):
     from cron import jobs as cron_jobs
-    from hermes_cli import web_server
 
     job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -1132,7 +1106,6 @@ async def test_trigger_cron_job_returns_completed_snapshot_for_retained_oneshot(
 
 @pytest.mark.asyncio
 async def test_cron_profile_scan_runs_off_event_loop(isolated_profiles, monkeypatch):
-    from hermes_cli import web_server
 
     worker_job = _web_server_cron._call_cron_for_profile(
         "worker_alpha",
@@ -1174,7 +1147,6 @@ async def test_cron_profile_scan_runs_off_event_loop(isolated_profiles, monkeypa
 
 @pytest.mark.asyncio
 async def test_cron_dashboard_io_rejects_async_callables():
-    from hermes_cli import web_server
 
     async def async_callable():
         return "nope"
@@ -1186,7 +1158,6 @@ async def test_cron_dashboard_io_rejects_async_callables():
 
 @pytest.mark.asyncio
 async def test_update_cron_job_normalizes_dashboard_core_fields(isolated_profiles, tmp_path):
-    from hermes_cli import web_server
 
     scripts_dir = isolated_profiles["worker_alpha"] / "scripts"
     scripts_dir.mkdir()
@@ -1222,7 +1193,6 @@ async def test_update_cron_job_normalizes_dashboard_core_fields(isolated_profile
 async def test_create_cron_job_rejects_script_outside_profile_scripts(
     isolated_profiles, tmp_path
 ):
-    from hermes_cli import web_server
 
     outside = tmp_path / "outside.py"
     outside.write_text("print('nope')\n", encoding="utf-8")
@@ -1243,7 +1213,6 @@ async def test_create_cron_job_rejects_script_outside_profile_scripts(
 
 @pytest.mark.asyncio
 async def test_create_cron_job_rejects_empty_agent_job(isolated_profiles):
-    from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as exc:
         await _rt_cron.create_cron_job(
@@ -1257,7 +1226,6 @@ async def test_create_cron_job_rejects_empty_agent_job(isolated_profiles):
 
 @pytest.mark.asyncio
 async def test_update_cron_job_no_agent_reuses_existing_script(isolated_profiles):
-    from hermes_cli import web_server
 
     scripts_dir = isolated_profiles["worker_alpha"] / "scripts"
     scripts_dir.mkdir()
@@ -1283,7 +1251,6 @@ async def test_update_cron_job_no_agent_reuses_existing_script(isolated_profiles
 
 @pytest.mark.asyncio
 async def test_dashboard_cron_rejects_missing_context_from(isolated_profiles):
-    from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as create_exc:
         await _rt_cron.create_cron_job(
@@ -1330,7 +1297,7 @@ async def test_dashboard_cron_noop_inference_fields_keep_existing_snapshots(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import runtime_provider, web_server
+    from hermes_cli import runtime_provider
 
     current_provider = {"name": "initial-provider"}
     monkeypatch.setattr(
@@ -1380,7 +1347,7 @@ async def test_update_cron_job_clears_snapshots_for_no_agent(
     isolated_profiles,
     monkeypatch,
 ):
-    from hermes_cli import runtime_provider, web_server
+    from hermes_cli import runtime_provider
 
     monkeypatch.setattr(
         runtime_provider,
@@ -1421,7 +1388,6 @@ async def test_update_cron_job_clears_snapshots_for_no_agent(
 async def test_update_cron_job_rejects_id_mutation(isolated_profiles, monkeypatch):
     """Dashboard surfaces a 400 (not a 500 or silent rename) when an
     id-mutation attempt is rejected by cron/jobs.update_job."""
-    from hermes_cli import web_server
 
     notified_profiles = []
     monkeypatch.setattr(
@@ -1453,7 +1419,6 @@ async def test_update_cron_job_rejects_id_mutation(isolated_profiles, monkeypatc
 
 @pytest.mark.asyncio
 async def test_cron_delete_with_profile_deletes_only_target_profile(isolated_profiles):
-    from hermes_cli import web_server
 
     default_job = _web_server_cron._call_cron_for_profile(
         "default",
@@ -1481,7 +1446,6 @@ async def test_cron_delete_with_profile_deletes_only_target_profile(isolated_pro
 
 @pytest.mark.asyncio
 async def test_cron_profile_validation_errors(isolated_profiles):
-    from hermes_cli import web_server
 
     with pytest.raises(HTTPException) as bad_name:
         await _rt_cron.list_cron_jobs(profile="../bad")
@@ -1499,7 +1463,6 @@ async def test_create_cron_job_without_profile_uses_backend_own_profile(
     """A pool backend scoped to a named profile must not default creates to
     ``~/.hermes`` when the request carries no explicit ``profile`` (the
     Desktop app's pre-profileScoped clients sent none)."""
-    from hermes_cli import web_server
 
     monkeypatch.setenv(
         "HERMES_HOME", str(isolated_profiles["worker_alpha"])
@@ -1525,7 +1488,6 @@ async def test_create_cron_job_without_profile_defaults_when_unscoped(
 ):
     """HERMES_HOME at the default home (or unrecognized) keeps the legacy
     ``default`` fallback."""
-    from hermes_cli import web_server
 
     monkeypatch.setenv("HERMES_HOME", str(isolated_profiles["default"]))
 
