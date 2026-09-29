@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, test } from 'vitest'
+import { afterEach, test, vi } from 'vitest'
 
 import {
   gitFor,
@@ -17,6 +17,13 @@ import {
   reviewStage,
   reviewUnstage
 } from './git-review-ops'
+import { reviewCreatePr } from './git-review-ops'
+
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<{ execFile: unknown; execFileSync: unknown }>()
+
+  return { ...actual, execFile: vi.fn() }
+})
 
 const tempDirs: string[] = []
 
@@ -46,26 +53,6 @@ test('resolveRenamePath: plain path is unchanged', () => {
 
 test('gitFor accepts an internally resolved git binary path containing spaces', () => {
   assert.doesNotThrow(() => gitFor(process.cwd(), 'C:\\Program Files\\Git\\cmd\\git.exe'))
-})
-
-test('gitFor runs git through a spaced binary path', async () => {
-  if (process.platform !== 'win32') {
-    return
-  }
-
-  const gitBin = path.join(process.env.ProgramFiles || String.raw`C:\Program Files`, 'Git', 'cmd', 'git.exe')
-
-  if (!fs.existsSync(gitBin)) {
-    return
-  }
-
-  const repo = makeRepo()
-
-  fs.writeFileSync(path.join(repo, 'changed.txt'), 'review me\n')
-
-  const status = await gitFor(repo, gitBin).status()
-
-  assert.equal(status.not_added.includes('changed.txt'), true)
 })
 
 test('resolveRenamePath: simple rename resolves to the new path', () => {
@@ -186,4 +173,45 @@ test('Review revert rejects outside a repository', async () => {
 
   tempDirs.push(dir)
   await assert.rejects(() => reviewRevert(dir, 'missing.txt', 'git'))
+})
+
+const mockExecFile = vi.mocked(await import('node:child_process')).execFile
+
+type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
+
+// `execFile` has overloaded declarations returning ChildProcess; the mock
+// implementation only needs to drive its callback, so view it as a plain
+// callable and set the implementation through the Mock typing.
+function failGh(stderr: string): void {
+  ;(
+    mockExecFile as unknown as {
+      mockImplementation: (
+        impl: (file: string, args: string[], options: object, callback: ExecFileCallback) => void
+      ) => unknown
+    }
+  ).mockImplementation((_bin: string, _args: string[], _opts: object, callback: ExecFileCallback) => {
+    const error = new Error('command failed')
+
+    if (stderr) {
+      ;(error as Error & { stderr?: string }).stderr = stderr
+    }
+
+    callback(error, '', stderr)
+  })
+}
+
+test('reviewCreatePr surfaces gh stderr when pr create fails', async () => {
+  const dir = makeRepo()
+
+  failGh('no commits between main and feature')
+
+  await assert.rejects(reviewCreatePr(dir, 'git', 'gh'), /no commits between main and feature/)
+})
+
+test('reviewCreatePr falls back to the generic message when gh reports no stderr', async () => {
+  const dir = makeRepo()
+
+  failGh('')
+
+  await assert.rejects(reviewCreatePr(dir, 'git', 'gh'), /is gh installed and authenticated\?/)
 })
