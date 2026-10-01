@@ -126,6 +126,20 @@ async function reviewCwd(repoPath, purpose, gitBin) {
   }
 }
 
+async function reviewCwd(repoPath, purpose, gitBin) {
+  const cwd = resolveRequestedPathForIpc(repoPath, { purpose })
+
+  try {
+    const root = String(await gitFor(cwd, gitBin).revparse(['--show-toplevel'])).trim()
+
+    return root ? path.resolve(root) : cwd
+  } catch {
+    // Preserve existing off-repo behavior. Only cwd values already inside a
+    // repository are normalized to its top level.
+    return cwd
+  }
+}
+
 // simple-git reports renames as `old => new` (and `dir/{old => new}/f`); resolve
 // to the NEW path so the row addresses the real file for diff/stage.
 function resolveRenamePath(raw) {
